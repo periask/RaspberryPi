@@ -1,0 +1,9 @@
+https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
+https://mirror1.malwaredomains.com/files/justdomains
+http://sysctl.org/cameleon/hosts
+https://s3.amazonaws.com/lists.disconnect.me/simple_tracking.txt
+https://s3.amazonaws.com/lists.disconnect.me/simple_ad.txt
+https://hosts-file.net/ad_servers.txt
+https://dbl.oisd.nl
+https://gist.githubusercontent.com/kevincolten/a856d469e408f075f03d1316b4ada7e9/raw/e03fb4794ab132a8b6290797c525c2e9d81f45fd/ad_servers.txt
+https://raw.githubusercontent.com/buckmelanoma/block_lists/master/leadforensics.txt
