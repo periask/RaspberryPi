@@ -1,6 +1,13 @@
-[
-    {
-        "relay": 26,
-        "MCP3008": 0
-    }
-]
+{
+    "channel_data" : [
+        {
+            "RELAY": 26,
+            "MCP3008": 0,
+            "LED": 19
+        }
+    ],
+    "mobile_number": [],
+    "twilio_sid": "",
+    "twilio_auth_token": "",
+    "twilio_mobile": ""
+}

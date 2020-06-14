@@ -6,11 +6,16 @@ import sqlite3
 import json
 import datetime
 import time
+import argparse
+
 import RPi.GPIO as GPIO
 
 # Import SPI library (for hardware SPI) and MCP3008 library.
 import Adafruit_GPIO.SPI as SPI
 import Adafruit_MCP3008
+
+# SMS
+from twilio.rest import Client
 
 """
 
@@ -152,12 +157,11 @@ RPI 0 W <=> Soil moisture sensor
 # https://www.instructables.com/id/5V-Relay-Raspberry-Pi/
 
 """
-# Bold = "\x1b[90m"
 color = "\033[94m"
 Reset = "\x1b[0m"
 
 class MySqlite3Inteface:
-    def __init__(self, DB_FILE="/home/pi/irrigationSystem.sqlite3"):
+    def __init__(self, DB_FILE):
 
         createDB = not os.path.exists(DB_FILE)
         # connect to the database
@@ -199,7 +203,15 @@ class MySqlite3Inteface:
         print("`"+"-"*102+"`")
 
 class MyIrrigationSystem:
-    def __init__(self, channelsInfo):
+    def __init__(self, data):
+        with open(data) as fp:
+            self.data = json.load(fp)
+            self.channelData = self.data["channel_data"]
+            self.mobileNumbers = self.data["mobile_number"]
+            self.twilioSID = self.data["twilio_sid"]
+            self.twilioAuthToken = self.data["twilio_auth_token"]
+            self.twilioMobile = self.data["twilio_mobile"]
+
         # Use BCM Number
         GPIO.setmode(GPIO.BCM)
 
@@ -208,23 +220,24 @@ class MyIrrigationSystem:
         SPI_DEVICE = 0
         self.mcp = Adafruit_MCP3008.MCP3008(spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE))
 
-        # Get the channel info for relay and the moisture sensor
-        with open(channelsInfo) as fp:
-            self.channelData = json.load(fp)
-
     def isDry(self, value):
         # Consider DRY if sensor value is > 700
         return value > 800
 
     def wateringPlants(self, channel):
         try:
-            # Relay channel is OUTPUT
-            GPIO.setup(channel["relay"], GPIO.OUT)
+            # Relay & LED channels are OUTPUT
+            GPIO.setup(channel["RELAY"], GPIO.OUT)
+            GPIO.setup(channel["LED"], GPIO.OUT)
+
 
             # Start the motor
-            GPIO.output(channel["relay"], GPIO.HIGH)  # Turn motor on
+            GPIO.output(channel["LED"], GPIO.HIGH)  # Turn motor on
+            GPIO.output(channel["RELAY"], GPIO.HIGH)  # Turn motor on
             time.sleep(10)                            # Water for 10 sec
-            GPIO.output(channel["relay"], GPIO.LOW)   # Turn motor off
+            GPIO.output(channel["RELAY"], GPIO.LOW)   # Turn motor off
+            GPIO.output(channel["LED"], GPIO.LOW)  # Turn motor on
+
         except:
             print("Unexpected error:", sys.exc_info())
 
@@ -232,31 +245,86 @@ class MyIrrigationSystem:
             # Cleanup the GPIO
             GPIO.cleanup()
 
+    def stillWet(self, channel):
+        try:
+            GPIO.setup(19, GPIO.OUT)
+
+            for i in range(10):
+                # Start the motor
+                GPIO.output(19, GPIO.HIGH)  # Turn motor on
+                time.sleep(0.5)
+                GPIO.output(19, GPIO.LOW)  # Turn motor on
+                time.sleep(0.5)
+        except:
+            print("Unexpected error:", sys.exc_info())
+
     def getMoisture(self, channel):
         # Read moisture senor value
         return self.mcp.read_adc(channel["MCP3008"])
 
-if __name__ == "__main__":
-    irrigationSystem = MyIrrigationSystem("channels.json")
-    sqlite3Interface = MySqlite3Inteface()
+    def sendSMS(self, message):
+        client = Client(self.twilioSID, self.twilioAuthToken)
+        for mobile in self.mobileNumbers:
+            client.messages.create(to=mobile,
+                                   from_=self.twilioMobile,
+                                   body=message)
 
+def myArgParger():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-i", "--input_channel", type=str, default="channels.json",
+                        help="Data File with Channel and user information.")
+    parser.add_argument("-d", "--database", type=str, default="irrigationSystem.sqlite3",
+                        help="Database file.")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="increase output verbosity")
+    args = parser.parse_args()
+    return args
+
+if __name__ == "__main__":
+    args = myArgParger()
+
+    # Initialize the objects
+    irrigationSystem = MyIrrigationSystem(args.input_channel)
+    sqlite3Interface = MySqlite3Inteface(args.database)
+
+    # Moisture level indicator strings
     moistureLevel = ["Moist", "Dry"]
+
+    # Message for SMS
+    now = datetime.datetime.now()
+    dt_string = now.strftime("%Y-%m-%d %H:%M:%S")
+    message = """.-
+Today: {}
+{}""".format(dt_string, "-"*30)
 
     for channel in irrigationSystem.channelData:
         moist = irrigationSystem.getMoisture(channel)
         watering = int(irrigationSystem.isDry(moist))
-        print(color,"Relay Channel:", Reset, channel["relay"],
+
+        print(color, "Relay Channel:", Reset, channel["RELAY"],
               color, "Moisture Sensor Channel:", Reset, channel["MCP3008"],
               color, "Moisture Level:", Reset, moist)
-        print(color, "It is {}".format(moistureLevel[watering]), Reset, end = "")
+        print(color, "It is {}.".format(moistureLevel[watering]), Reset, end = "")
+        message = message + """
+
+ Relay Channel: {}
+ Moisture Sensor Channel: {}
+ Moisture Level: {}
+ It is {}. """.format(channel["RELAY"], channel["MCP3008"], moist, moistureLevel[watering])
 
         # Update Database
-        sqlite3Interface.insert(channel["relay"], channel["MCP3008"], moist, watering)
+        sqlite3Interface.insert(channel["RELAY"], channel["MCP3008"], moist, watering)
 
         if watering:
-            print("    Watering now...")
+            message = message + "Watering \U0001F331\U0001F6BF"
+            print(" Watering now... \U0001F331\U0001F6BF")
             irrigationSystem.wateringPlants(channel)
         else:
-            print()
+            message = message + "Soil is wet... \U0001F331"
+            print(" Soil is wet... \U0001F331")
+            irrigationSystem.stillWet(channel)
 
-    sqlite3Interface.printAllData()
+    irrigationSystem.sendSMS(message)
+
+    if args.verbose == True:
+        sqlite3Interface.printAllData()
